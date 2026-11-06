@@ -306,8 +306,10 @@ def train_and_evaluate(
             "Source data is synthetic and is not live factory telemetry.",
             "The target describes failure at the recorded datapoint, not a future horizon.",
             "Model outputs are experimental and not calibrated real-world failure probabilities.",
-            "Test metrics are a single held-out evaluation and should not be used to tune "
-            "candidates.",
+            (
+                "Test metrics are a single held-out evaluation and should not be used to tune "
+                "candidates."
+            ),
         ],
     }
     return final_pipeline, metadata

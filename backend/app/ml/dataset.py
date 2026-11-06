@@ -233,8 +233,10 @@ def write_eda_report(frame: pd.DataFrame, report_path: str | Path) -> Path:
     lines = [
         "# AI4I 2020 Dataset — Exploratory Data Analysis",
         "",
-        "> Dataset provenance and limitations are documented in [Dataset documentation]"
-        "(dataset.md).",
+        (
+            "> Dataset provenance and limitations are documented in [Dataset documentation]"
+            "(dataset.md)."
+        ),
         "> The source data is synthetic and its labels describe a failure at the same recorded",
         "> datapoint; it does not provide a future prediction horizon or live machine stream.",
         "",
@@ -272,10 +274,14 @@ def write_eda_report(frame: pd.DataFrame, report_path: str | Path) -> Path:
             "",
             f"- Candidate feature columns: {', '.join(FEATURE_COLUMNS)}",
             f"- Identifier columns excluded from model inputs: {', '.join(ID_COLUMNS)}",
-            f"- Target/failure-mode columns excluded from model inputs: "
-            f"{', '.join((TARGET_COLUMN,) + FAILURE_MODE_COLUMNS)}",
-            "- These candidate features support same-record event classification only; "
-            "a future-horizon target requires a properly time-ordered dataset and labels.",
+            (
+                f"- Target/failure-mode columns excluded from model inputs: "
+                f"{', '.join((TARGET_COLUMN,) + FAILURE_MODE_COLUMNS)}"
+            ),
+            (
+                "- These candidate features support same-record event classification only; "
+                "a future-horizon target requires a properly time-ordered dataset and labels."
+            ),
             "",
         ]
     )

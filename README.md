@@ -1,45 +1,80 @@
 # SentinelML
 
-SentinelML is a production-style predictive maintenance platform for industrial equipment. The repository will evolve through the implementation phases described in the master prompt, starting with the project skeleton and environment setup.
+SentinelML is an early-stage predictive-maintenance research project for preparing the AI4I 2020 benchmark, comparing failure-event classifiers, and saving validated model artifacts. The repository includes a React workspace dashboard and a small FastAPI health endpoint.
 
-## Implementation status
+> **Scope:** This project does not currently ingest live machine telemetry or serve predictions. AI4I is synthetic and labels failures at the same recorded datapoint; it does not establish future failure prediction or real-factory performance.
 
-- Phase 1: project scaffold and environment configuration
-- Phase 2: AI4I dataset ingestion, validation, and EDA pipeline
-- Phase 3: baseline/candidate training, held-out evaluation, and validated model artifacts
-- Later phases: anomaly detection, explanations, API, dashboard, persistence, and deployment
+## What is implemented
 
-## Architecture
+- AI4I dataset download, schema and label validation, and exploratory reporting.
+- A reproducible baseline and candidate-model training workflow with stratified train/validation/test splits.
+- Model selection on validation average precision and one final evaluation on the held-out test split.
+- Versioned model artifacts with metadata and integrity checks.
+- A FastAPI health endpoint at `/api/v1/health` and a dashboard that checks backend connectivity.
+- Dockerfiles and a Docker Compose development setup.
 
-- Backend: FastAPI, Pydantic, scikit-learn, XGBoost, SHAP, MLflow, SQLite
-- Frontend: React + TypeScript + Vite + Tailwind + Recharts
-- Data and ML: UCI AI4I data ingestion, schema/range/label validation, EDA, training, model comparison, anomaly detection, explanations
-- Deployment: Docker Compose, frontend container, backend container
+Prediction-serving APIs, authentication, persistent run tracking, live telemetry, and production deployment are not implemented.
 
-## Repository layout
+## Technology
 
-- `backend/` — Python API service and ML pipeline code
-- `frontend/` — React app
-- `data/` — raw data, processed data, fixtures
-- `docs/` — project documentation
-- `artifacts/` — trained model and metadata outputs
-- `.github/workflows/` — CI pipelines
+- **Backend:** Python 3.12, FastAPI, pandas, scikit-learn, XGBoost
+- **Frontend:** React 18, TypeScript, Vite
+- **Validation:** pytest and the GitHub Actions CI workflow
 
-## Local setup (Windows PowerShell)
+## Run locally
 
-The project targets Python 3.12. Install Python 3.12 before setting up the environment.
+### Backend
+
+From the repository root in Windows PowerShell:
 
 ```powershell
-cd "C:\Users\DELL\OneDrive\Desktop\SentinelML — Predictive Failure & Root-Cause Intelligence"
 py -3.12 -m venv .venv312
 .\.venv312\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r backend\requirements.txt
+Push-Location backend
+uvicorn app.main:app --reload --port 8000
 ```
 
-## Dataset preparation
+The health endpoint is available at `http://localhost:8000/api/v1/health`.
+Set `APP_CORS_ORIGINS` to a comma-separated list of trusted frontend origins if
+the frontend is served from a different origin. The default allows
+`http://localhost:5173`.
 
-Download, validate, and create an EDA report from the official UCI CSV:
+### Frontend
+
+In a second PowerShell terminal:
+
+```powershell
+Set-Location frontend
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173`. To point the dashboard at another backend, set
+`VITE_API_BASE_URL` before starting Vite, for example:
+
+```powershell
+$env:VITE_API_BASE_URL = "http://localhost:8000"
+npm run dev
+```
+
+### Docker Compose
+
+From the repository root:
+
+```powershell
+docker compose up --build
+```
+
+The development services are exposed on ports 8000 (backend) and 5173
+(frontend). The Compose configuration is intended for local development, not
+production deployment.
+
+## Prepare the dataset
+
+The download command retrieves the official CSV from the UCI Machine Learning
+Repository, validates it before writing, and generates an EDA report:
 
 ```powershell
 Push-Location backend
@@ -47,11 +82,18 @@ python -m scripts.prepare_dataset --download
 Pop-Location
 ```
 
-For manual dataset placement and detailed schema, target, and limitation notes, see [docs/dataset.md](docs/dataset.md). The UCI dataset is synthetic and supports same-datapoint event classification; it does not provide a future prediction horizon or live machine telemetry. The small fixture under `data/fixtures/` is for tests only.
+The official download is written to `data/raw/ai4i2020.csv`. For manual
+placement, copy the CSV into that location and run
+`python -m scripts.prepare_dataset` from `backend/`.
+
+`data/fixtures/ai4i_sample.csv` is a six-row synthetic test fixture. It must not
+be used as a substitute for the full dataset or as evidence of model
+performance. See the [dataset guide](docs/dataset.md) for source, license,
+schema, validation, and limitations.
 
 ## Train and evaluate
 
-The command compares the dummy baseline, logistic regression, random forest, and XGBoost. It selects using validation average precision, then evaluates the selected refit pipeline once on the untouched test partition. It refuses to use test/demo fixtures in place of the real dataset.
+After preparing the full dataset:
 
 ```powershell
 Push-Location backend
@@ -59,14 +101,40 @@ python -m scripts.train_model
 Pop-Location
 ```
 
-The generated artifact directory contains `pipeline.joblib` and `metadata.json` with the fitted preprocessing/model, feature and target definition, dataset hash, split details, package versions, and measured metrics. See [docs/ml-methodology.md](docs/ml-methodology.md) for the split policy, metrics, imbalance handling, artifact trust requirements, and interpretation limits. Scores are not established real-world probabilities.
+The workflow compares a dummy baseline, logistic regression, random forest, and
+XGBoost. It selects by validation average precision, refits on train plus
+validation, evaluates once on the held-out test partition, and saves a
+`pipeline.joblib` and `metadata.json` under `artifacts/`.
 
-## Phase 2 and 3 checks
+Read the [ML methodology](docs/ml-methodology.md) for split policy, metrics,
+artifact trust requirements, and interpretation limits. Only load model
+artifacts generated and stored locally by this project.
 
-Run dataset and training tests from the backend folder:
+## Validate changes
 
 ```powershell
 Push-Location backend
-python -m pytest tests\test_dataset.py tests\test_training.py -q
+python -m pytest tests -q
 Pop-Location
+ruff check backend
+Push-Location frontend
+npm run lint
+npm run build
+Pop-Location
+```
+
+The GitHub Actions workflow runs the backend tests and frontend production
+build for pushes to `main` and pull requests.
+
+## Repository layout
+
+```text
+backend/              FastAPI service, data pipeline, training, and tests
+frontend/             React + TypeScript workspace dashboard
+data/fixtures/        Small synthetic test fixture
+data/raw/             Downloaded source data (not committed)
+data/processed/       Generated dataset outputs (not committed)
+docs/                 Dataset and ML methodology documentation
+artifacts/            Generated model artifacts (not committed)
+.github/workflows/    Continuous integration
 ```
