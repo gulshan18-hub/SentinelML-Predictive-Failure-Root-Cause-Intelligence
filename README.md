@@ -1,6 +1,7 @@
 # SentinelML
 
-SentinelML is an early-stage predictive-maintenance research project for preparing the AI4I 2020 benchmark, comparing failure-event classifiers, and saving validated model artifacts. The repository includes a React workspace dashboard and a small FastAPI health endpoint.
+SentinelML is an early-stage predictive-maintenance research project for preparing the AI4I 2020 benchmark, comparing failure-event classifiers, and saving validated model artifacts. The repository includes a React workspace dashboard, a small FastAPI health
+endpoint, and a Streamlit dataset explorer.
 
 > **Scope:** This project does not currently ingest live machine telemetry or serve predictions. AI4I is synthetic and labels failures at the same recorded datapoint; it does not establish future failure prediction or real-factory performance.
 
@@ -58,6 +59,25 @@ Open `http://localhost:5173`. To point the dashboard at another backend, set
 $env:VITE_API_BASE_URL = "http://localhost:8000"
 npm run dev
 ```
+
+### Streamlit
+
+Run the Streamlit dataset explorer from the repository root:
+
+```powershell
+python -m pip install -r requirements.txt
+python -m streamlit run streamlit_app.py
+```
+
+Upload the official AI4I CSV in the sidebar to view validated dataset summaries
+and charts. Uploaded data is processed in memory. The app does not train a
+model, serve predictions, or persist uploaded files.
+
+To deploy with Streamlit Community Cloud, push this repository to GitHub, create
+an app from the repository, set the **Main file path** to `streamlit_app.py`,
+and deploy. The root `requirements.txt` and `runtime.txt` supply the app
+dependencies and Python 3.12 runtime. The dataset is not committed; upload the
+official CSV after the app starts. No secrets or backend service are required.
 
 ### Docker Compose
 

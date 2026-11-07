@@ -15,6 +15,7 @@ DATASET_FILENAME = "ai4i2020.csv"
 ID_COLUMNS = ("UDI", "Product ID")
 TARGET_COLUMN = "Machine failure"
 FAILURE_MODE_COLUMNS = ("TWF", "HDF", "PWF", "OSF", "RNF")
+LABEL_COLUMNS = (TARGET_COLUMN,) + FAILURE_MODE_COLUMNS
 NUMERIC_SENSOR_COLUMNS = (
     "Air temperature [K]",
     "Process temperature [K]",
@@ -72,10 +73,53 @@ class DatasetValidationError(ValueError):
         super().__init__(f"Dataset validation failed: {details}")
 
 
+def normalize_column_names(frame: pd.DataFrame) -> pd.DataFrame:
+    """Return a copy with BOM characters and surrounding column-name whitespace removed."""
+    normalized = frame.copy(deep=True)
+    normalized.columns = [
+        str(column).replace("\ufeff", "").strip() for column in normalized.columns
+    ]
+    return normalized
+
+
+def _format_row_examples(
+    frame: pd.DataFrame, positions: np.ndarray, columns: tuple[str, ...]
+) -> str:
+    def display_value(value: object) -> object:
+        return value.item() if isinstance(value, np.generic) else value
+
+    examples: list[str] = []
+    identifier_column = next(
+        (column for column in ("UDI", "UID") if column in frame.columns), None
+    )
+    for position in positions[:10]:
+        details = [f"CSV row {int(position) + 2}"]
+        if identifier_column is not None:
+            identifier = display_value(frame[identifier_column].iloc[position])
+            details.append(f"{identifier_column}={identifier!r}")
+        values = ", ".join(
+            f"{column}={display_value(frame[column].iloc[position])!r}"
+            for column in columns
+        )
+        examples.append(f"{', '.join(details)} ({values})")
+    remaining = len(positions) - len(examples)
+    if remaining:
+        examples.append(f"... and {remaining} more")
+    return "; ".join(examples)
+
+
 def validate_dataset(frame: pd.DataFrame) -> DatasetValidationReport:
     """Check the AI4I schema, labels, missingness, uniqueness, and basic ranges."""
     errors: list[str] = []
     warnings: list[str] = []
+    frame = normalize_column_names(frame)
+    column_counts = pd.Series(frame.columns).value_counts()
+    duplicate_columns = sorted(column_counts[column_counts > 1].index.tolist())
+    if duplicate_columns:
+        errors.append(
+            "Column names must be unique after normalization; duplicates: "
+            + ", ".join(duplicate_columns)
+        )
     columns = set(frame.columns)
     expected = set(EXPECTED_COLUMNS)
     missing_columns = sorted(expected - columns)
@@ -97,14 +141,14 @@ def validate_dataset(frame: pd.DataFrame) -> DatasetValidationReport:
         errors.append(f"Dataset contains {duplicate_row_count} duplicate rows.")
 
     duplicate_uid_count = 0
-    if "UDI" in frame:
+    if "UDI" in frame and "UDI" not in duplicate_columns:
         duplicate_uid_count = int(frame["UDI"].duplicated().sum())
         if duplicate_uid_count:
             errors.append(f"Dataset contains {duplicate_uid_count} duplicate UDI values.")
 
     invalid_numeric_columns: list[str] = []
     for column in NUMERIC_COLUMNS:
-        if column not in frame:
+        if column not in frame or column in duplicate_columns:
             continue
         numeric = pd.to_numeric(frame[column], errors="coerce")
         if numeric.isna().any() or not np.isfinite(numeric.to_numpy(dtype=float)).all():
@@ -115,19 +159,28 @@ def validate_dataset(frame: pd.DataFrame) -> DatasetValidationReport:
             + ", ".join(invalid_numeric_columns)
         )
 
-    for column in FAILURE_MODE_COLUMNS + (TARGET_COLUMN,):
-        if column not in frame:
+    numeric_labels: dict[str, pd.Series] = {}
+    invalid_labels: list[str] = []
+    for column in LABEL_COLUMNS:
+        if column not in frame or column in duplicate_columns:
             continue
         values = pd.to_numeric(frame[column], errors="coerce")
-        if values.notna().any() and not values.dropna().isin((0, 1)).all():
-            errors.append(f"Label column '{column}' must contain only 0 or 1.")
+        numeric_labels[column] = values
+        invalid_mask = values.isna() | ~values.isin((0, 1))
+        if invalid_mask.any():
+            invalid_labels.append(column)
+            positions = np.flatnonzero(invalid_mask.to_numpy())
+            errors.append(
+                f"Label column '{column}' must contain only numeric 0 or 1 values; "
+                f"invalid values at {_format_row_examples(frame, positions, (column,))}."
+            )
 
-    if "Type" in frame:
+    if "Type" in frame and "Type" not in duplicate_columns:
         invalid_types = sorted(set(frame["Type"].dropna().astype(str)) - {"L", "M", "H"})
         if invalid_types:
             errors.append(f"Type must be one of L, M, or H; found: {', '.join(invalid_types)}")
 
-    if "Product ID" in frame:
+    if "Product ID" in frame and "Product ID" not in duplicate_columns:
         product_ids = frame["Product ID"].astype("string")
         invalid_product_ids = ~product_ids.str.fullmatch(r"[LMH]\d+", na=False)
         if invalid_product_ids.any():
@@ -139,19 +192,19 @@ def validate_dataset(frame: pd.DataFrame) -> DatasetValidationReport:
         "Rotational speed [rpm]",
     )
     for column in positive_columns:
-        if column in frame:
+        if column in frame and column not in duplicate_columns:
             values = pd.to_numeric(frame[column], errors="coerce")
             if (values.notna() & values.le(0)).any():
                 errors.append(f"'{column}' must be greater than zero.")
 
     nonnegative_columns = ("Torque [Nm]", "Tool wear [min]")
     for column in nonnegative_columns:
-        if column in frame:
+        if column in frame and column not in duplicate_columns:
             values = pd.to_numeric(frame[column], errors="coerce")
             if (values.notna() & values.lt(0)).any():
                 errors.append(f"'{column}' must be non-negative.")
 
-    if "UDI" in frame:
+    if "UDI" in frame and "UDI" not in duplicate_columns:
         uid_values = pd.to_numeric(frame["UDI"], errors="coerce")
         invalid_uid = uid_values.dropna().le(0) | uid_values.dropna().mod(1).ne(0)
         if invalid_uid.any():
@@ -159,20 +212,30 @@ def validate_dataset(frame: pd.DataFrame) -> DatasetValidationReport:
 
     failure_count = 0
     failure_rate = 0.0
-    if TARGET_COLUMN in frame:
-        target = pd.to_numeric(frame[TARGET_COLUMN], errors="coerce")
+    if TARGET_COLUMN in numeric_labels:
+        target = numeric_labels[TARGET_COLUMN]
         if target.notna().any():
             failure_count = int(target.eq(1).sum())
             failure_rate = float(target.eq(1).mean())
 
-    if all(column in frame for column in (TARGET_COLUMN,) + FAILURE_MODE_COLUMNS):
-        target = pd.to_numeric(frame[TARGET_COLUMN], errors="coerce")
-        modes = frame.loc[:, FAILURE_MODE_COLUMNS].apply(pd.to_numeric, errors="coerce")
+    if (
+        all(column in numeric_labels for column in LABEL_COLUMNS)
+        and not invalid_labels
+        and not duplicate_columns
+    ):
+        target = numeric_labels[TARGET_COLUMN]
+        modes = pd.DataFrame(
+            {column: numeric_labels[column] for column in FAILURE_MODE_COLUMNS},
+            index=frame.index,
+        )
         expected_target = modes.max(axis=1)
-        comparable = target.notna() & expected_target.notna()
-        if (target[comparable] != expected_target[comparable]).any():
+        mismatch_positions = np.flatnonzero(target.ne(expected_target).to_numpy())
+        if len(mismatch_positions):
             errors.append(
-                "'Machine failure' must be 1 exactly when at least one failure-mode label is 1."
+                "'Machine failure' must equal max(TWF, HDF, PWF, OSF, RNF); "
+                "failure-mode label mismatch. "
+                f"Found {len(mismatch_positions)} mismatched row(s): "
+                f"{_format_row_examples(frame, mismatch_positions, LABEL_COLUMNS)}."
             )
 
     if len(frame) and failure_rate == 0.0:
@@ -207,14 +270,26 @@ def load_dataset(path: str | Path) -> pd.DataFrame:
             f"Dataset not found at {source}. Download the official dataset or place "
             f"{DATASET_FILENAME} in data/raw/."
         )
-    frame = pd.read_csv(source)
+    frame = normalize_column_names(pd.read_csv(source))
     require_valid_dataset(frame)
-    return frame
+    return frame.assign(
+        **{
+            column: pd.to_numeric(frame[column], errors="raise")
+            for column in LABEL_COLUMNS
+        }
+    )
 
 
 def write_eda_report(frame: pd.DataFrame, report_path: str | Path) -> Path:
     """Write a Markdown EDA report using only values computed from the supplied data."""
+    frame = normalize_column_names(frame)
     validation = require_valid_dataset(frame)
+    frame = frame.assign(
+        **{
+            column: pd.to_numeric(frame[column], errors="raise")
+            for column in LABEL_COLUMNS
+        }
+    )
     destination = Path(report_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
 

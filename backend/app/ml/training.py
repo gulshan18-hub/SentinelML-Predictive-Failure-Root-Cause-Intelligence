@@ -41,8 +41,10 @@ from app.ml.dataset import (
     CATEGORICAL_FEATURE_COLUMNS,
     FEATURE_COLUMNS,
     ID_COLUMNS,
+    LABEL_COLUMNS,
     NUMERIC_SENSOR_COLUMNS,
     TARGET_COLUMN,
+    normalize_column_names,
     require_valid_dataset,
 )
 
@@ -196,9 +198,17 @@ def train_and_evaluate(
 ) -> tuple[Pipeline, dict[str, Any]]:
     """Select using validation average precision and evaluate the refit model once on test."""
     selected_config = config or TrainingConfig()
+    frame = normalize_column_names(frame)
     require_valid_dataset(frame)
+    frame = frame.assign(
+        **{
+            column: pd.to_numeric(frame[column], errors="raise")
+            for column in LABEL_COLUMNS
+        }
+    )
 
-    class_counts = frame[TARGET_COLUMN].value_counts()
+    labels = pd.to_numeric(frame[TARGET_COLUMN], errors="raise").astype(int)
+    class_counts = labels.value_counts()
     if set(class_counts.index) != {0, 1} or int(class_counts.min()) < 10:
         raise ValueError(
             "Training requires at least 10 examples from each target class for reliable "
@@ -206,7 +216,6 @@ def train_and_evaluate(
         )
 
     features = frame.loc[:, FEATURE_COLUMNS].copy()
-    labels = frame[TARGET_COLUMN].astype(int)
     train_validation_x, test_x, train_validation_y, test_y = train_test_split(
         features,
         labels,
